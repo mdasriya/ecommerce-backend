@@ -48,6 +48,20 @@ def get_by_hash_for_update(db: Session, token_hash: str) -> RefreshToken | None:
     return db.scalar(statement)
 
 
+def family_has_active_token(db: Session, family_id: uuid.UUID) -> bool:
+    """True if the session (family) still has a usable, unexpired token."""
+    statement = (
+        select(RefreshToken.id)
+        .where(
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > _now(),
+        )
+        .limit(1)
+    )
+    return db.scalar(statement) is not None
+
+
 def revoke(db: Session, token: RefreshToken) -> None:
     if token.revoked_at is None:
         token.revoked_at = _now()

@@ -34,11 +34,17 @@ class LoginRequest(StrictRequest):
 
 
 class RefreshRequest(StrictRequest):
-    refresh_token: RefreshTokenField
+    refresh_token: str | None = None
 
 
 class LogoutRequest(StrictRequest):
-    refresh_token: RefreshTokenField
+    """
+    Browsers send NO body: the refresh token is read from the HttpOnly cookie
+    (JavaScript cannot read it). The body field remains for non-browser
+    clients (Swagger, scripts) that hold the token themselves.
+    """
+
+    refresh_token: RefreshTokenField | None = None
 
 
 class UpdateMeRequest(StrictRequest):

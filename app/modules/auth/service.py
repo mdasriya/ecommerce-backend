@@ -7,14 +7,16 @@ db.commit(), so each use case is all-or-nothing.
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core import security
+from app.core.config import settings
 from app.core.exceptions import AppException
 from app.modules.auth import repository as token_repository
+from app.modules.auth.model import RefreshToken
 from app.modules.user import repository as user_repository
 from app.modules.user.model import User
 from app.modules.user.roles import UserRole
@@ -124,6 +126,27 @@ def login(db: Session, *, email: str, password: str) -> tuple[User, IssuedTokens
     return user, tokens
 
 
+def _is_concurrent_rotation(db: Session, stored: RefreshToken) -> bool:
+    """
+    A revoked token is NOT necessarily stolen. Two requests sent at the same
+    moment with the same cookie (several tabs restored together, or a page
+    load racing an API call) both reach the database: the first rotates the
+    token, the second then finds it revoked a moment ago.
+
+    Treat it as a race (not theft) only if BOTH hold:
+      - it was revoked within REFRESH_TOKEN_REUSE_GRACE_SECONDS, and
+      - its session still has an active token, i.e. it was revoked by a
+        ROTATION. Logout / password change / reuse detection revoke the
+        whole family, so they leave no active token and are never revived.
+    """
+    grace = settings.REFRESH_TOKEN_REUSE_GRACE_SECONDS
+    if grace <= 0 or stored.revoked_at is None:
+        return False
+    if stored.revoked_at < _now() - timedelta(seconds=grace):
+        return False
+    return token_repository.family_has_active_token(db, stored.family_id)
+
+
 def refresh(db: Session, *, raw_refresh_token: str) -> tuple[User, IssuedTokens]:
     """
     Refresh-token ROTATION with REUSE DETECTION:
@@ -131,6 +154,8 @@ def refresh(db: Session, *, raw_refresh_token: str) -> tuple[User, IssuedTokens]
       revoked token -> it was already used once, so someone has a copy:
                        revoke the WHOLE family (thief and victim both
                        must log in again) and reject.
+                       Exception: a concurrent request within the short
+                       grace window (see _is_concurrent_rotation).
     """
     stored = token_repository.get_by_hash_for_update(db, security.hash_refresh_token(raw_refresh_token))
 
@@ -138,6 +163,13 @@ def refresh(db: Session, *, raw_refresh_token: str) -> tuple[User, IssuedTokens]
         raise _unauthorized(INVALID_REFRESH_TOKEN)
 
     if stored.revoked_at is not None:
+        if _is_concurrent_rotation(db, stored):
+            user = user_repository.get_by_id(db, stored.user_id)
+            if user is not None and user.is_active:
+                tokens = _issue_tokens(db, user, family_id=stored.family_id)
+                db.commit()
+                db.refresh(user)
+                return user, tokens
         token_repository.revoke_family(db, stored.family_id)
         db.commit()  # persist the revocation even though we reject the request
         raise _unauthorized(INVALID_REFRESH_TOKEN)

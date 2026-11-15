@@ -23,12 +23,11 @@ app = FastAPI(
 
 # ---------------------------------------------------------------- CORS
 # Only the frontends listed in CORS_ORIGINS may call this API from a browser.
-# allow_credentials=False because we send tokens in the Authorization header,
-# not cookies, so the browser never needs to attach credentials automatically.
+# allow_credentials=True because refresh token is sent via HttpOnly cookie.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )

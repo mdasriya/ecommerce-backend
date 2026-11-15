@@ -11,7 +11,6 @@ from app.modules.auth.schema import (
     AuthResponse,
     ChangePasswordRequest,
     LoginRequest,
-    LogoutRequest,
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
@@ -45,8 +44,11 @@ def refresh(db: Session, payload: RefreshRequest):
     return success_response(message="Token refreshed successfully", data=_auth_payload(user, tokens))
 
 
-def logout(db: Session, payload: LogoutRequest):
-    service.logout(db, raw_refresh_token=payload.refresh_token)
+def logout(db: Session, raw_refresh_token: str | None):
+    # No token (cookie already gone) -> nothing to revoke; still a success so
+    # logout is idempotent.
+    if raw_refresh_token:
+        service.logout(db, raw_refresh_token=raw_refresh_token)
     return success_response(message="Logged out successfully")
 
 
